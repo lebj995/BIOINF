@@ -7,7 +7,13 @@ BiocManager::install("biomaRt")
 library(biomaRt)
 install.packages('expm')
 library(expm)
-
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+library(igraph)
+BiocManager::install(c("clusterProfiler", "org.Hs.eg.db", "enrichplot"))
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(enrichplot)
 # STRINGNetworkToolbox# STRING DATABASE ---------------------------------------------------------
 string_raw <- read_delim("9606.protein.links.v12.0 STRING.txt", delim = " ")
 
@@ -291,95 +297,242 @@ ggplot(metrics, aes(x = Degree, y = Betweenness)) +
 save.image("progetto_bioinf_MS_completo.RData")
 load("progetto_bioinf_MS_completo.RData")
 
-
 # PART 2 OF THE PROJECT ---------------------------------------------------
-#1  split training e probe set data
+# ==============================================================================
+# PARTE 2: CROSS-VALIDATION E CONFRONTO ALGORITMI
+# ==============================================================================
+
+# 2. FUNZIONE DI PERFORMANCE (Punto 2.3)
+calculate_performance <- function(predicted_genes, probe_set, top_k) {
+  top_pred <- head(predicted_genes, top_k)
+  hits <- length(intersect(top_pred, probe_set))
+  
+  precision <- hits / top_k
+  recall <- hits / length(probe_set)
+  f1 <- ifelse(precision + recall == 0, 0, 2 * (precision * recall) / (precision + recall))
+  
+  return(data.frame(Precision = precision, Recall = recall, F1 = f1))
+}
+
+# 3. CONFIGURAZIONE AMBIENTE
+# Assicurati che il percorso sia corretto per il tuo PC
+python_exe <- "C:/Users/Massimo/AppData/Local/Programs/Python/Python312/python.exe"
+# INSTERSECTION LCC BIOGRID AND SEED GENES
+seed_genes_biogrid <- intersect(seed_genes, V(g_reactome_lcc)$name)
+# 4. PREPARAZIONE DATI (Esegui solo se non hai già questi oggetti)
 set.seed(123)
-# Mischiamo i geni casualmente
-shuffled_genes <- sample(seed_genes)
-# Creiamo 5 gruppi (folds)
+shuffled_genes <- sample(seed_genes_biogrid)
 folds <- cut(seq(1, length(shuffled_genes)), breaks = 5, labels = FALSE)
-# Esempio: Come estrarre Training e Probe per il primo Fold
-fold_id <- 1
-probe_set <- shuffled_genes[which(folds == fold_id)]
-training_set <- shuffled_genes[which(folds != fold_id)]
-print(paste("Geni nel Training Set:", length(training_set)))
-print(paste("Geni nel Probe Set:", length(probe_set)))
 
-#2  Esportiamo le reti in formato tab-separated per DIAMOnD
-write_tsv(as_data_frame(g_string_lcc), "string_network.txt", col_names = FALSE)
-write_tsv(as_data_frame(g_biogrid_lcc), "biogrid_network.txt", col_names = FALSE)
-write_tsv(as_data_frame(g_huri_lcc), "huri_network.txt", col_names = FALSE)
-write_tsv(as_data_frame(g_reactome_lcc), "reactome_network.txt", col_names = FALSE)
 
-# --- NUOVA SEZIONE: PRE-CALCOLO (Fuori dal ciclo) ---
-message("Calcolo matrici di diffusione (Kernel)... attendere.")
-L_matrix <- as.matrix(laplacian_matrix(g_string_lcc, normalized = TRUE))
+# SOLO DYMOND
+# --- SOLO DIAMOnD ---
+for (f in 1:5) {
+  message("Lancio DIAMOnD - Fold ", f)
+  
+  training_set <- shuffled_genes[which(folds != f)]
+  outfile <- paste0("diamond_reactome_fold_", f, ".txt")
+  write.table(training_set, "current_seeds.txt", row.names=F, col.names=F, quote=F)
+  
+  # Lo esegue solo se il file non esiste già
+  if (!file.exists(outfile)) {
+    cmd <- paste(shQuote(python_exe), "DIAMOnD.py reactome_network.txt current_seeds.txt 200 1", outfile)
+    system(cmd)
+  }
+}
+message("Fase DIAMOnD completata!")
+
+# --- SOLO DIFFUSIONE E ANALISI ---
+tabella_performance <- data.frame()
 times <- c(0.1, 1.0, 2.0, 5.0, 10.0)
 
-# Calcoliamo le matrici una volta sola per risparmiare ore di calcolo
-kernels <- lapply(times, function(t) expm(-t * L_matrix))
-names(kernels) <- as.character(times)
-
-#3  Funzione di Diffusione (Heat Diffusion)
-run_diffusion_fast <- function(kernel, graph, seeds) {
+run_diffusion_ultra_light <- function(graph, seeds, t, iterations = 20) {
+  # 1. Matrice di Adiacenza sparsa
+  W <- as_adjacency_matrix(graph, sparse = TRUE)
+  
+  # 2. Normalizzazione sparsa senza usare diag()
+  # Dividiamo ogni riga per il grado del nodo corrispondente
+  d <- degree(graph)
+  d_inv <- ifelse(d > 0, 1/d, 0)
+  W_norm <- Diagonal(x = d_inv) %*% W 
+  
+  # 3. Vettore iniziale (semi)
   p0 <- rep(0, vcount(graph))
   names(p0) <- V(graph)$name
   p0[intersect(seeds, names(p0))] <- 1
+  if(sum(p0) > 0) p0 <- p0 / sum(p0) 
   
-  # Moltiplicazione velocissima
-  pt <- as.vector(kernel %*% p0)
-  names(pt) <- V(graph)$name
+  # 4. Iterazione (Random Walk with Restart)
+  # t controlla quanto il segnale si allontana (alpha alto = segnale lontano)
+  alpha <- t / (1 + t) 
+  pt <- as.matrix(p0) # Teniamo pt come vettore colonna
   
-  # Rimuovi i semi (Punto 2.2)
-  pt[intersect(seeds, names(pt))] <- -1
-  return(sort(pt, decreasing = TRUE))
+  for (i in 1:iterations) {
+    pt <- alpha * (W_norm %*% pt) + (1 - alpha) * p0
+  }
+  
+  # 5. Raggruppamento risultati
+  pt_vec <- as.vector(pt)
+  names(pt_vec) <- V(graph)$name
+  
+  # Rimuovi i semi dai risultati
+  pt_vec[intersect(seeds, names(pt_vec))] <- -1
+  
+  return(sort(pt_vec, decreasing = TRUE))
 }
 
-#4  Liste per salvare i risultati della validazione
-results_list <- list()
-# Opzione 1: Slash normali (Funziona sempre in R)
-python_exe <- "C:/Users/Massimo/AppData/Local/Programs/Python/Python312/python.exe"
-
-# Verifica se ora R riesce a leggere la versione di Python
-system(paste(shQuote(python_exe), "--version"))
-tabella_performance <- data.frame()
 
 for (f in 1:5) {
-  message("--- Elaborazione Fold ", f, " ---")
-  
-  # 1. Split (UGUALE)
+  message("\n Analisi Fold ", f)
   probe_set <- shuffled_genes[which(folds == f)]
   training_set <- shuffled_genes[which(folds != f)]
   
-  # 2. DIAMOnD (Modificato per sicurezza)
-  outfile <- paste0("diamond_fold_", f, ".txt")
-  write.table(training_set, "current_seeds.txt", row.names = F, col.names = F, quote = F)
-  
-  # Esegui DIAMOnD solo se il file non esiste già (per risparmiare tempo se riparti)
-  if (!file.exists(outfile)) {
-    cmd <- paste(shQuote(python_exe), "DIAMOnD.py string_network.txt current_seeds.txt 200 1", outfile)
-    system(cmd)
-  }
-  
-  diamond_res <- read_tsv(outfile, comment = "#", col_names = c("rank", "gene", "p"))$gene
-  
-  # 3. DIFFUSIONE VELOCE (Modificata)
-  for (t_val in names(kernels)) {
-    diff_predicted <- names(run_diffusion_fast(kernels[[t_val]], g_string_lcc, training_set))
-    
-    # 4. VALIDAZIONE (Punto 2.3)
-    # Calcoliamo per Top 50 e Top X (es. lunghezza training set)
-    perf_diff <- calculate_performance(diff_predicted, probe_set, 50) %>%
-      mutate(Algo = "Diffusion", Parameter = t_val, Fold = f)
-    tabella_performance <- rbind(tabella_performance, perf_diff)
-  }
-  
-  # Aggiungi performance DIAMOnD
+  # 1. DIAMOnD (Leggiamo i file che hai già creato)
+  diamond_res <- read_tsv(paste0("diamond_reactome_fold_", f, ".txt"), comment="#", 
+                          col_names=c("rank","gene","p"), show_col_types=F)$gene
   perf_diamond <- calculate_performance(diamond_res, probe_set, 50) %>%
-    mutate(Algo = "DIAMOnD", Parameter = "alpha=1", Fold = f)
+    mutate(Algo="DIAMOnD", Parameter="alpha=1", Fold=f)
   tabella_performance <- rbind(tabella_performance, perf_diamond)
   
-  gc() # Pulisci memoria ad ogni fold
-}
-system("python --version")
+  # 2. Diffusione Iterativa (Veloce e leggera)
+  for (t_val in times) {
+    message("Diffusione ultra-light t = ", t_val)
+    
+    # Chiamata alla nuova funzione sparsa
+    diff_predicted <- names(run_diffusion_ultra_light(g_reactome_lcc, training_set, t_val))
+    
+    # Validazione e salvataggio (Uguale a prima)
+    perf_diff <- calculate_performance(diff_predicted, probe_set, 50) %>%
+      mutate(Algo="Diffusion", Parameter=as.character(t_val), Fold=f)
+    tabella_performance <- rbind(tabella_performance, perf_diff)
+    
+    gc() }}
+
+# 3. Risultato Finale
+print(tabella_performance %>% group_by(Algo, Parameter) %>% summarise(across(everything(), mean)))
+# performance comparison HEAT DIFFUSION and DIAMOND on STRING
+write_csv(tabella_performance, "performance_REACTOME.csv")
+
+
+rm(list = setdiff(ls(), c("seed_genes", "python_exe", "calculate_performance", "run_diffusion_ultra_light")))
+gc()
+
+# TASK 2.3
+# Carica i risultati (assicurati che i nomi dei file siano corretti)
+res_string <- read_csv("performance_STRING.csv") %>% mutate(Network = "STRING")
+res_biogrid <- read_csv("performance_BIOGRID.csv") %>% mutate(Network = "BIOGRID")
+res_huri <- read_csv("performance_HURI.csv") %>% mutate(Network = "HURI")
+res_reactome <- read_csv("performance_REACTOME.csv") %>% mutate(Network = "REACTOME")
+
+# Unisci tutto e calcola le medie
+tabella_comparativa <- bind_rows(res_string, res_biogrid, res_huri, res_reactome) %>%
+  group_by(Network, Algo, Parameter) %>%
+  summarise(Mean_Precision = mean(Precision), .groups = 'drop') %>%
+  arrange(desc(Mean_Precision))
+
+print(tabella_comparativa)
+
+
+# COMPARISON PLOT
+ggplot(tabella_comparativa, aes(x = Network, y = Mean_Precision, fill = Algo)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Comparison Performance",
+       subtitle = "AVG Precision on first 50 genes predicted",
+       y = "Mean Precision", x = "Rete") +
+  scale_fill_brewer(palette = "Set1")
+
+
+
+# PART 3 ------------------------------------------------------------------
+# THE BEST COMBO NETWORK-ALGORITHM IS DIAMOND-STRING
+# 1. Prepariamo tutti i semi (senza split)
+# Filtriamo i geni MS presenti in STRING
+final_seeds <- intersect(seed_genes, V(g_string_lcc)$name)
+write.table(final_seeds, "final_ms_seeds.txt", row.names=F, col.names=F, quote=F)
+
+# 2. Lanciamo DIAMOnD per l'ultima volta (200 iterazioni)
+# Usiamo la rete STRING che è la più performante
+message("Generazione dei 200 geni candidati definitivi...")
+cmd_final <- paste(shQuote(python_exe), "DIAMOnD.py string_network.txt final_ms_seeds.txt 200 1 diamond_final_results.txt")
+system(cmd_final)
+
+# 3. Carichiamo i risultati in R
+diamond_final <- read_tsv("diamond_final_results.txt", comment="#", 
+                          col_names=c("rank","gene","p"), show_col_types=F)
+
+# Visualizza i primi 10 geni candidati "scoperti"
+print(head(diamond_final, 10))
+
+# ENRICHMENT ANALYSIS
+# 2. Conversione dei nomi dei geni candidati (DIAMOnD) in ENTREZ ID
+genes_to_test <- diamond_final$gene
+
+conversion <- bitr(genes_to_test, 
+                   fromType = "SYMBOL", 
+                   toType = "ENTREZID", 
+                   OrgDb = org.Hs.eg.db)
+
+# 3. Esecuzione dell'analisi GO per i Biological Processes (BP)
+go_enrich <- enrichGO(gene          = conversion$ENTREZID,
+                      OrgDb         = org.Hs.eg.db,
+                      ont           = "BP",
+                      pAdjustMethod = "BH",
+                      pvalueCutoff  = 0.05,
+                      qvalueCutoff  = 0.05,
+                      readable      = TRUE)
+
+# 4. Visualizzazione dei risultati
+dotplot(go_enrich, showCategory=15) + 
+  ggtitle("Processi Biologici dei 200 Candidati DIAMOnD")
+
+
+# PART 3.2
+# 1. Conversione dei geni seme originali (usa la lista iniziale 'seed_genes')
+conversion_seeds <- bitr(seed_genes, 
+                         fromType = "SYMBOL", 
+                         toType = "ENTREZID", 
+                         OrgDb = org.Hs.eg.db)
+
+# 2. Arricchimento GO per i semi
+go_seeds <- enrichGO(gene          = conversion_seeds$ENTREZID,
+                     OrgDb         = org.Hs.eg.db,
+                     ont           = "BP",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff  = 0.05,
+                     readable      = TRUE)
+
+# 3. Visualizzazione
+dotplot(go_seeds, showCategory=15) + 
+  ggtitle("Processi Biologici dei Geni Seme (MS Originali)")
+
+
+# LAST PART OF POINT 3
+# 1. Selezioniamo i primi 10 geni candidati (i "vincitori" di DIAMOnD)
+top_10_candidates <- head(diamond_final$gene, 10)
+
+# 2. Identifichiamo i semi originali presenti in STRING
+seeds_in_network <- intersect(seed_genes, V(g_string_lcc)$name)
+
+# 3. Estraiamo il sottografo
+# Prendiamo i top 10 candidati e i semi a loro collegati
+nodes_to_show <- c(top_10_candidates, seeds_in_network)
+subgraph <- induced_subgraph(g_string_lcc, V(g_string_lcc)$name %in% nodes_to_show)
+
+# Per rendere il grafico leggibile, teniamo solo i nodi che hanno almeno un legame
+# con i nostri top 10 candidati
+neighbors_of_top <- neighbors(g_string_lcc, V(g_string_lcc)$name %in% top_10_candidates)
+final_nodes <- c(top_10_candidates, intersect(seeds_in_network, names(neighbors_of_top)))
+subgraph_final <- induced_subgraph(g_string_lcc, V(g_string_lcc)$name %in% final_nodes)
+
+# 4. Coloriamo i nodi: Blu per i Semi, Rosso per i Nuovi Candidati
+V(subgraph_final)$color <- ifelse(V(subgraph_final)$name %in% top_10_candidates, "red", "skyblue")
+V(subgraph_final)$size <- ifelse(V(subgraph_final)$name %in% top_10_candidates, 8, 4)
+
+# 5. Disegniamo la rete
+plot(subgraph_final, 
+     vertex.label = ifelse(V(subgraph_final)$name %in% top_10_candidates, V(subgraph_final)$name, NA),
+     vertex.label.color = "black",
+     vertex.label.cex = 0.8,
+     edge.arrow.size = 0.2,
+     main = "Modulo Sclerosi Multipla: Semi (Blu) e Top 10 Candidati (Rossi)")
