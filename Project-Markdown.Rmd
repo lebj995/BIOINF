@@ -29,6 +29,8 @@ This project analyzes Multiple Sclerosis using network medicine approaches inclu
 
 ## Setup and Configuration
 
+Libraries for our implementation.
+
 ```{r}
 ensure_packages <- function(pkgs) {
   for (p in pkgs) {
@@ -45,7 +47,6 @@ ensure_packages(c(
   "ggplot2", "reshape2"
 ))
 
-# Bioconductor packages (clusterProfiler/org.Hs.eg.db/enrichplot/ReactomePA)
 if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
 
 bioc_pkgs <- c("clusterProfiler", "org.Hs.eg.db", "enrichplot", "ReactomePA")
@@ -56,8 +57,10 @@ for (p in bioc_pkgs) {
 
 ```
 
+We define the directory where we collect the main outputs of this first part.
+
 ```{r}
-# User paths (EDIT THESE)
+# User paths 
 PATH_STRING_LINKS   <- "9606.protein.links.v12.0 STRING.txt.txt"
 PATH_REACTOME_FI    <- "FIsInGene_04142025_with_annotations_REACTOME.txt"
 PATH_BIOGRID_TAB3   <- "BIOGRID-ORGANISM-Homo_sapiens-5.0.252.tab3.txt"
@@ -69,6 +72,8 @@ dir.create(OUTDIR, showWarnings = FALSE, recursive = TRUE)
 ```
 
 ## Helper Functions
+
+Here, we define functions for constructing reactomes.
 
 ```{r}
 # Deduplicate an undirected edge list and remove self-loops
@@ -161,7 +166,6 @@ read_seed_genes_gedipnet <- function(path, col = "Associated genes") {
 ```
 
 ```{r}
-# Optional: HGNC symbol checking
 hgnc_check <- function(symbols) {
   symbols <- unique(symbols)
   if (!requireNamespace("HGNChelper", quietly = TRUE)) {
@@ -179,7 +183,7 @@ hgnc_check <- function(symbols) {
 ```
 
 ```{r}
-# Table 1 row builder
+# Table 1 
 tab1_row <- function(g_lcc, seed_genes, name) {
   node_names <- igraph::V(g_lcc)$name
   seeds_present <- intersect(seed_genes, node_names)
@@ -216,7 +220,6 @@ mart <- connect_ensembl()
 ### STRING Interactome
 
 ```{r}
-message("Building STRING interactome...")
 string_raw <- readr::read_delim(
   PATH_STRING_LINKS,
   delim = " ",
@@ -247,13 +250,17 @@ string_mapped <- string_ensp %>%
 string_edges <- dedup_undirected_edges(string_mapped %>% transmute(from = from_symbol, to = to_symbol))
 g_string_lcc <- graph_lcc(string_edges)
 
-message("STRING LCC nodes: ", vcount(g_string_lcc), " | edges: ", ecount(g_string_lcc))
+cat(
+  "STRING LCC nodes:", vcount(g_string_lcc),
+  " | edges:", ecount(g_string_lcc),
+  "\n",
+  sep = " "
+)
 ```
 
 ### Reactome Interactome
 
 ```{r}
-message("Building Reactome interactome...")
 reactome_raw <- readr::read_tsv(PATH_REACTOME_FI, show_col_types = FALSE)
 
 stopifnot(all(c("Gene1", "Gene2") %in% names(reactome_raw)))
@@ -263,13 +270,18 @@ reactome_edges <- dedup_undirected_edges(
 )
 g_reactome_lcc <- graph_lcc(reactome_edges)
 
-message("Reactome LCC nodes: ", vcount(g_reactome_lcc), " | edges: ", ecount(g_reactome_lcc))
+cat(
+  "Reactome LCC nodes:", vcount(g_reactome_lcc),
+  " | edges:", ecount(g_reactome_lcc),
+  "\n",
+  sep = " "
+)
+
 ```
 
 ### BioGRID Interactome
 
 ```{r}
-message("Building BioGRID interactome...")
 biogrid_raw <- readr::read_tsv(PATH_BIOGRID_TAB3, show_col_types = FALSE)
 
 required_cols_bg <- c(
@@ -289,13 +301,19 @@ biogrid_edges <- biogrid_raw %>%
 biogrid_edges <- dedup_undirected_edges(biogrid_edges)
 g_biogrid_lcc <- graph_lcc(biogrid_edges)
 
-message("BioGRID LCC nodes: ", vcount(g_biogrid_lcc), " | edges: ", ecount(g_biogrid_lcc))
+cat(
+  "BioGRID LCC nodes:", vcount(g_biogrid_lcc),
+  " | edges:", ecount(g_biogrid_lcc),
+  "\n",
+  sep = " "
+)
+
+
 ```
 
 ### HuRI Interactome
 
 ```{r}
-message("Building HuRI interactome...")
 huri_raw <- readr::read_tsv(PATH_HURI_2COL, col_names = c("from", "to"), show_col_types = FALSE)
 
 huri_raw <- huri_raw %>%
@@ -317,7 +335,14 @@ huri_mapped <- huri_raw %>%
 huri_edges <- dedup_undirected_edges(huri_mapped %>% transmute(from = from_symbol, to = to_symbol))
 g_huri_lcc <- graph_lcc(huri_edges)
 
-message("HuRI LCC nodes: ", vcount(g_huri_lcc), " | edges: ", ecount(g_huri_lcc))
+cat(
+  "HuRI LCC nodes:", vcount(g_huri_lcc),
+  " | edges:", ecount(g_huri_lcc),
+  "\n",
+  sep = " "
+)
+
+
 ```
 
 ```{r}
@@ -333,7 +358,6 @@ interactomes_lcc <- list(
 ## Load Disease Genes
 
 ```{r}
-message("Reading seed genes from GeDiPNet...")
 seed_genes_raw <- read_seed_genes_gedipnet(PATH_GEDIPNET_DISEASE, col = "Associated genes")
 message("Parsed seed genes: ", length(seed_genes_raw))
 
@@ -345,13 +369,17 @@ if (!is.null(chk$report)) {
   message("Saved HGNC check report")
 }
 
-message("Final seed genes after optional correction: ", length(seed_genes))
+cat(
+  "Final seed genes after optional correction:", length(seed_genes),
+  "\n",
+  sep = " "
+)
+
 ```
 
 ## Table 1: Interactome Summary
 
 ```{r}
-message("Building Table 1...")
 table1 <- bind_rows(lapply(names(interactomes_lcc), function(nm) {
   tab1_row(interactomes_lcc[[nm]], seed_genes, nm)
 }))
@@ -375,7 +403,11 @@ table2_top20   <- list()
 
 for (net_name in names(interactomes_lcc)) {
 
-  message("Computing Table 2 for interactome: ", net_name)
+  cat(
+  "Computing Table 2 for interactome:", net_name,
+  "\n",
+  sep = " ")
+
 
   g <- interactomes_lcc[[net_name]]
 
@@ -403,10 +435,12 @@ for (net_name in names(interactomes_lcc)) {
     V(g_disease)[comp_dis$membership == giant_id]
   )
 
-  message(
-    "  Disease LCC nodes=", vcount(g_disease_lcc),
-    " edges=", ecount(g_disease_lcc)
-  )
+  cat(
+  "  Disease LCC nodes=", vcount(g_disease_lcc),
+  " edges=", ecount(g_disease_lcc),
+  "\n",
+  sep = "")
+
 
   # Centrality metrics
   centrality_tbl <- tibble(
@@ -479,23 +513,7 @@ for (net_name in names(interactomes_lcc)) {
   print(p)
 }
 
-message("Table 2 completed for all interactomes.")
 
-```
-
-## Save Part 1 Objects
-
-```{r}
-saveRDS(
-  list(
-    interactomes_lcc = interactomes_lcc,
-    seed_genes = seed_genes,
-    table1 = table1
-  ),
-  file.path(OUTDIR, "PART1_objects.rds")
-)
-
-message("Part 1 complete. Outputs saved to: ", OUTDIR)
 ```
 
 # Part 2: Gene Prioritization
@@ -544,6 +562,21 @@ sort(K[K > 0])
 
 ## Diffusion Functions
 
+In this section, we implement a **network diffusion (heat diffusion) model** to propagate disease information from known seed genes across the interactome. The underlying idea is that genes that are *topologically close* to disease genes in the network are more likely to be functionally related to the disease.
+
+We model diffusion using the **random-walk normalized Laplacian**,\
+$L_{rw} = I - D^{-1}A$, where $A$ is the adjacency matrix and $D$ the degree matrix. This formulation corresponds to a **random walk on the network**, which is well suited for biological networks with heterogeneous node degrees.
+
+The continuous diffusion process $$
+\frac{dp}{dt} = -L_{rw} p
+$$ is approximated numerically via an **explicit Euler scheme**, leading to the update rule $$
+p_{k+1} = (1 - \Delta t)\, p_k + \Delta t \, W p_k,
+$$ where $W = D^{-1}A$ is the row-stochastic transition matrix.
+
+The function `prepare_diffusion()` precomputes this matrix once for efficiency, while `run_diffusion()` initializes heat on the seed genes, iteratively propagates it for a total diffusion time $t$, and returns a ranked list of genes based on their final heat scores.
+
+We normalize the initial heat vector to make it probability-like and explicitly **remove seed genes from the final ranking**, ensuring a fair evaluation of candidate genes.
+
 ```{r}
 ## Diffusion Functions (HEAT DIFFUSION / NETWORK PROPAGATION)
 
@@ -585,7 +618,7 @@ run_diffusion <- function(prep, seeds, t, dt = 0.01) {
 
   n_steps <- max(1L, as.integer(ceiling(t / dt)))
 
-  # Heat diffusion iterations (no restart term)
+  # Heat diffusion iterations 
   p_mat <- as.matrix(p)
   for (k in seq_len(n_steps)) {
     p_mat <- (1 - dt) * p_mat + dt * (W %*% p_mat)
@@ -593,7 +626,7 @@ run_diffusion <- function(prep, seeds, t, dt = 0.01) {
 
   scores <- as.vector(p_mat); names(scores) <- nodes
 
-  # IMPORTANT (project spec): seed genes appear mixed in the ranking; remove them before evaluation :contentReference[oaicite:3]{index=3}
+
   scores[seeds] <- -Inf
 
   sort(scores, decreasing = TRUE)
@@ -635,11 +668,30 @@ read_diamond_rank <- function(path) {
 }
 ```
 
-## Cross-Validation Loop
+## Cross-Validation for Gene Prioritization (DIAMOnD vs Diffusion)
+
+This chunk implements a K-fold cross-validation (CV) framework to evaluate and compare our two gene prioritization methods—DIAMOnD and network diffusion—across multiple interactomes (BioGRID, HuRI, STRING, Reactome). It is marked `eval=FALSE` because it is computationally expensive; the corresponding results are stored on disk and can be reloaded without rerunning the full CV.
+
+For each interactome LCC, we first restrict the disease seed list to genes that actually appear in that network (`seeds_present`). If too few seeds are available (here, `< 10`), we skip the network because CV estimates would be unstable and uninformative.
+
+We then define a set of Top-K thresholds (`K_values`) as a function of the available seed count. This avoids using an arbitrary single K and allows us to study performance at multiple operating points. For DIAMOnD, we ensure the Python implementation outputs at least `max(K_values)` candidates (`diamond_iters_needed`), otherwise precision/recall at large K would be artificially capped by output length.
+
+Within each of the `N_FOLDS` folds, we split the seeds into:
+- `train`: the seeds given to the algorithm (known disease genes),
+- `probe`: held-out seeds used as ground truth for evaluation.
+
+For each fold we:
+
+1. Run DIAMOnD (or reuse the cached output file), read the ranked list, and remove training seeds from the ranking to prevent leakage into evaluation.
+
+2. Run diffusion for each diffusion time `t` in `TIMES`, producing a score-based ranking; we similarly remove training seeds and optionally save ranked scores to disk for reproducibility.
+
+Finally, at each `K` we compute Precision, Recall, F1, and Hits using `score_ranking()` and store one row per `(network, method, fold, parameter, K)`. The final dataset `results_all` is obtained by row-binding all collected results and is later summarized (mean ± SD over folds) to compare methods fairly and consistently.
+
+
 
 ```{r,eval=FALSE}
-# NOTA: Questo chunk è impostato con eval=FALSE perché richiede molto tempo.
-# I risultati sono già salvati in PART2_outputs/cv_all_folds_results.csv
+# Results are saved in PART2_outputs/cv_all_folds_results.csv
 all_rows <- list()
 row_i <- 1
 
@@ -748,7 +800,7 @@ results_all <- bind_rows(all_rows)
 ## Save Results
 
 ```{r}
-# Carica i risultati già calcolati invece di ricalcolarli
+
 if (!exists("results_all")) {
   results_all <- read_csv("PART2_outputs/cv_all_folds_results.csv", show_col_types = FALSE)
 }
@@ -772,7 +824,6 @@ write_csv(summary_results, "PART2_outputs/cv_summary_mean_sd.csv")
 ```
 
 ```{r}
-# --- Always define best_network/best_algo/best_param (even if CV chunk is eval=FALSE) ---
 
 # 1) Make sure summary_results exists (load from disk if needed)
 if (!exists("summary_results")) {
@@ -783,8 +834,8 @@ if (!exists("summary_results")) {
   }
 }
 
-# 2) Pick TopK=50 if available, otherwise use the largest TopK present
-target_topk <- 24
+# 2) Pick TopK=50 
+target_topk <- 50
 if (!(target_topk %in% summary_results$TopK)) {
   target_topk <- max(summary_results$TopK, na.rm = TRUE)
   message("TopK=50 not available; using TopK=", target_topk)
@@ -806,8 +857,13 @@ best_network <- best_combo$Network[[1]]
 best_algo    <- best_combo$Algo[[1]]
 best_param   <- best_combo$Parameter[[1]]
 
-message("Best combo @TopK=", target_topk, ": ", best_algo, " on ", best_network,
-        ifelse(is.na(best_param), "", paste0(" (t=", best_param, ")")))
+cat(
+  "Best combo @TopK=", target_topk, ": ", best_algo, " on ", best_network,
+  ifelse(is.na(best_param), "", paste0(" (t=", best_param, ")")),
+  "\n",
+  sep = ""
+)
+
 ```
 
 ## Identify Best Performer
@@ -820,6 +876,9 @@ print(best_combo)
 
 
 ```
+
+The best combination is DIAMOnD - STRING.
+
 
 ## Visualizations
 
@@ -904,7 +963,7 @@ ggsave("PART2_outputs/figures/PART2_precision_top50_heatmap.png",
 print(p_heat)
 ```
 
-# Part 3: Enrichment Analysis
+# Part 3: Best Algorithm and Enrichment Analysis
 
 ## Setup
 
@@ -927,13 +986,21 @@ universe <- V(g_best)$name
 final_seeds <- intersect(seed_genes, universe)
 writeLines(final_seeds, "PART3_outputs/final_run/final_seeds_in_best_interactome.txt")
 
-message("Universe size: ", length(universe))
-message("Seeds in universe: ", length(final_seeds))
+cat(
+  "Universe size:", length(universe),
+  "\n",
+  sep = " "
+)
+
+cat(
+  "Seeds in universe:", length(final_seeds),
+  "\n",
+  sep = " "
+)
+
 ```
 
 ```{r,eval=FALSE}
-# NOTA: Questo chunk è impostato con eval=FALSE perché DIAMOnD/Diffusion richiedono tempo.
-# I risultati sono già salvati in PART3_outputs/final_run/putative_genes_top100.csv
 best_algo_norm <- tolower(trimws(best_algo))
 
 if (best_algo_norm == "diamond") {
@@ -977,11 +1044,9 @@ if (best_algo_norm == "diamond") {
 write_csv(putative_tbl, "PART3_outputs/final_run/putative_genes_top100.csv")
 writeLines(putative_genes, "PART3_outputs/final_run/putative_genes_top100.txt")
 
-print(head(putative_tbl, 15))
 ```
 
 ```{r}
-# Carica i risultati già calcolati
 if (!exists("putative_tbl")) {
   putative_tbl <- read_csv("PART3_outputs/final_run/putative_genes_top100.csv", show_col_types = FALSE)
   putative_genes <- putative_tbl$Gene
@@ -990,7 +1055,130 @@ if (!exists("putative_tbl")) {
 print(head(putative_tbl, 20))
 ```
 
+
+
+```{r putative-module-figure, fig.width=9, fig.height=7}
+
+# -------------------------------------------------------------------------
+# Putative disease module visualization:
+# induced subgraph of (final_seeds ∪ putative_genes) on the best interactome
+# -------------------------------------------------------------------------
+
+# Safety checks
+stopifnot(exists("g_best"))
+stopifnot(exists("final_seeds"))
+stopifnot(exists("putative_genes"))
+
+dir.create("PART3_outputs/figures", showWarnings = FALSE, recursive = TRUE)
+
+# --- Limit number of seeds to keep the plot readable ---
+TOP_SEEDS <- 50
+plot_seeds <- head(intersect(final_seeds, V(g_best)$name), TOP_SEEDS)
+
+# Use a manageable number of putatives to keep the plot readable
+TOP_PLOT <- 10
+plot_putatives <- head(intersect(putative_genes, V(g_best)$name), TOP_PLOT)
+
+module_nodes <- unique(c(plot_seeds, plot_putatives))
+
+if (length(module_nodes) < 5) {
+  warning("Too few nodes to plot the putative module. Check seeds/putatives present in g_best.")
+} else {
+
+  g_module <- induced_subgraph(g_best, vids = module_nodes)
+
+  # If induced subgraph is disconnected, keep the LCC for clearer visualization
+  if (vcount(g_module) > 0 && ecount(g_module) > 0) {
+    comp <- components(g_module)
+    giant_id <- which.max(comp$csize)
+    g_module <- induced_subgraph(g_module, V(g_module)[comp$membership == giant_id])
+  }
+
+  # Vertex annotations
+  V(g_module)$type <- ifelse(V(g_module)$name %in% plot_seeds, "Seed", "Putative")
+
+  V(g_module)$color <- ifelse(V(g_module)$type == "Seed", "lightpink", "darkorange")
+  V(g_module)$size  <- ifelse(V(g_module)$type == "Seed", 10, 10)
+  V(g_module)$frame.color <- "grey30"
+
+  # Label only putative genes
+  V(g_module)$label <- ifelse(V(g_module)$type == "Putative", V(g_module)$name, NA)
+  V(g_module)$label.cex <- 0.5
+  V(g_module)$label.color <- "black"
+
+  # Layout (Fruchterman–Reingold is standard for small biological subnetworks)
+  set.seed(123)
+  lay <- layout_with_fr(g_module)
+
+  # Plot
+  plot(
+    g_module,
+    layout = lay,
+    vertex.label.family = "sans",
+    edge.color = "grey75",
+    edge.width = 0.8,
+    main = paste0(" (", best_network, " - ", best_algo, ") \n Putative disease module in the best interactome LCC \n (50 seed genes and top 10 putative genes)")
+  )
+
+  legend(
+    "topleft",
+    legend = c("50 Seed genes", "Top 10 Putative genes"),
+    pt.bg = c("lightpink", "darkorange"),
+    pch = 21,
+    pt.cex = 1.4,
+    bty = "n"
+  )
+
+  # Save a high-resolution PNG version as an external artifact
+  png_out <- file.path("PART3_outputs/figures", "PART3_putative_disease_module.png")
+  png(png_out, width = 1800, height = 1300, res = 200)
+  plot(
+    g_module,
+    layout = lay,
+    vertex.label.family = "sans",
+    edge.color = "grey75",
+    edge.width = 0.8,
+    main = paste0(" (", best_network, " - ", best_algo, ") \n Putative disease module in the best interactome LCC \n (50 seed genes and top 10 putative genes)")
+  )
+  legend(
+    "topleft",
+    legend = c("50 Seed genes", "Top 10 Putative genes"),
+    pt.bg = c("lightpink", "darkorange"),
+    pch = 21,
+    pt.cex = 1.4,
+    bty = "n"
+  )
+  dev.off()
+}
+
+
+
+```
 ## EnrichR Analysis
+
+
+In this section, we perform a functional enrichment analysis to biologically interpret both the known disease genes (seeds) and the top-ranked putative genes identified by our network-based prioritization methods. The goal is:
+
+(i) to characterize the biological processes and pathways associated with each gene set, and
+
+(ii) to assess whether the predicted genes recover functional signals consistent with established disease biology.
+
+We first rely on EnrichR, querying a curated and complementary set of annotation libraries (GO Biological Process, Molecular Function, Cellular Component, KEGG, and Reactome). These resources jointly capture molecular roles, cellular localization, and pathway-level mechanisms, providing a broad functional view. A standard adjusted p-value cutoff of 0.05 is used to control for multiple testing.
+
+To ensure robustness and reproducibility, we clean gene lists explicitly (removing missing or duplicated symbols), standardize EnrichR outputs into a consistent tabular format, and save:
+- the full enrichment results,
+- statistically significant terms,
+- and the top-ranked significant terms per database.
+
+We then directly compare enrichment results between seeds and putative genes. After normalizing term names (to avoid database-specific suffix artifacts), we compute both:
+- the number of overlapping significant terms, and
+- the Jaccard similarity between term sets.
+
+This overlap analysis provides a quantitative measure of biological consistency: high overlap suggests that the network-based predictions recover pathways already implicated in the disease, supporting their plausibility.
+
+Finally, we complement EnrichR with clusterProfiler and ReactomePA dotplot visualizations, converting gene symbols to Entrez IDs to ensure compatibility with these tools. Dotplots for GO, KEGG, and Reactome offer an intuitive summary of the most enriched categories and allow a direct visual comparison between seed-driven and prediction-driven functional landscapes.
+
+Overall, this enrichment workflow serves as a biological validation layer for our network medicine pipeline, linking topological prioritization back to interpretable molecular mechanisms.
 
 ```{r}
 if (!requireNamespace("enrichR", quietly = TRUE)) install.packages("enrichR")
@@ -1017,7 +1205,13 @@ clean_gene_list <- function(x) {
 seeds_for_enrichment <- clean_gene_list(final_seeds)
 putative_for_enrichment <- clean_gene_list(putative_genes)
 
-message("Enrichment seeds (n=", length(seeds_for_enrichment), ") | putative (n=", length(putative_for_enrichment), ")")
+cat(
+  "Enrichment seeds (n=", length(seeds_for_enrichment),
+  ") | putative (n=", length(putative_for_enrichment),
+  ")\n",
+  sep = " "
+)
+
 ```
 
 ```{r}
@@ -1162,10 +1356,10 @@ print(overlap_summary)
 #  clusterProfiler / ReactomePA enrichment dotplots 
 # -------------------------------------------------------------------------
 
-# Directory for figures (already created above, but safe)
+
 dir.create("PART3_outputs/figures", showWarnings = FALSE, recursive = TRUE)
 
-# Helper: SYMBOL -> ENTREZID robust conversion
+#  SYMBOL -> ENTREZID robust conversion
 symbol_to_entrez <- function(symbols) {
   symbols <- unique(trimws(as.character(symbols)))
   symbols <- symbols[!is.na(symbols) & symbols != ""]
@@ -1184,8 +1378,13 @@ symbol_to_entrez <- function(symbols) {
 entrez_putative <- symbol_to_entrez(putative_genes)
 entrez_seeds    <- symbol_to_entrez(seed_genes)
 
-message("clusterProfiler IDs: putative Entrez n=", length(entrez_putative),
-        " | seeds Entrez n=", length(entrez_seeds))
+cat(
+  "clusterProfiler IDs: putative Entrez n=", length(entrez_putative),
+  " | seeds Entrez n=", length(entrez_seeds),
+  "\n",
+  sep = " "
+)
+
 
 # Safety: stop early if conversion fails
 if (length(entrez_putative) < 5 || length(entrez_seeds) < 5) {
@@ -1207,7 +1406,10 @@ run_go_dotplots <- function(entrez_vec, label, showCategory = 15, pcut = 0.05) {
     )
 
     # Print table preview in the report
-    message("GO-", ont, " terms for ", label, ": ", nrow(as.data.frame(ego)))
+    cat(
+    "GO-", ont, " terms for ", label, ": ", nrow(as.data.frame(ego)),
+    "\n",
+    sep = " ")
 
     p <- enrichplot::dotplot(ego, showCategory = showCategory) +
       ggplot2::ggtitle(paste0("GO-", ont, ": ", label))
@@ -1234,7 +1436,11 @@ run_kegg_dotplot <- function(entrez_vec, label, showCategory = 15, pcut = 0.05) 
     )
   )
 
-  message("KEGG terms for ", label, ": ", nrow(as.data.frame(ekegg)))
+  cat(
+  "KEGG terms for ", label, ": ", nrow(as.data.frame(ekegg)),
+  "\n",
+  sep = " ")
+
 
   p <- enrichplot::dotplot(ekegg, showCategory = showCategory) +
     ggplot2::ggtitle(paste0("KEGG: ", label))
@@ -1258,7 +1464,11 @@ run_reactome_dotplot <- function(entrez_vec, label, showCategory = 15, pcut = 0.
     )
   )
 
-  message("Reactome terms for ", label, ": ", nrow(as.data.frame(er)))
+  cat(
+  "Reactome terms for ", label, ": ", nrow(as.data.frame(er)),
+  "\n",
+  sep = " ")
+
 
   p <- enrichplot::dotplot(er, showCategory = showCategory) +
     ggplot2::ggtitle(paste0("Reactome: ", label))
@@ -1349,7 +1559,12 @@ writeLines(top_genes, file.path(OUT4, "top20_putative_genes.txt"))
 write_csv(tibble(Rank = seq_along(top_genes), Gene = top_genes),
           file.path(OUT4, "top20_putative_genes.csv"))
 
-message("Top putative genes loaded: n=", length(top_genes))
+cat(
+  "Top putative genes loaded: n=", length(top_genes),
+  "\n",
+  sep = ""
+)
+
 ```
 
 ## DGIdb Analysis
@@ -1389,7 +1604,13 @@ dg_top <- dg_approved %>% filter(.data$gene_name %in% top_genes)
 
 write_csv(dg_top, file.path(OUT4, "dgidb", "dgidb_approved_interactions_top20genes.csv"))
 
-message("DGIdb approved interactions found: n_rows=", nrow(dg_top))
+cat(
+  "DGIdb approved interactions found: n_rows=", nrow(dg_top),
+  "\n",
+  sep = " "
+)
+
+
 ```
 
 ## Drug Ranking
@@ -1420,7 +1641,12 @@ drug_ranking <- rank_drugs_by_gene_coverage(dg_top)
 
 write_csv(drug_ranking, file.path(OUT4, "dgidb", "drug_ranking_by_top20gene_coverage.csv"))
 
-message("Drugs ranked: n=", nrow(drug_ranking))
+cat(
+  "Drugs ranked: n=", nrow(drug_ranking),
+  "\n",
+  sep = " "
+)
+
 
 print(drug_ranking)
 
@@ -1428,6 +1654,36 @@ top_drugs <- drug_ranking %>% slice_head(n = TOP_DRUGS_N) %>% pull(.data$drug_na
 ```
 
 # Part 5: PROCONSUL Comparison
+
+In this final section we benchmark our **best-performing gene prioritization pipeline** (DIAMOnD, selected in Part 2 via cross-validation) against **PROCONSUL**, a probabilistic extension of DIAMOnD-style module expansion. The goal is not to prove one method is universally better, but to check whether an alternative, theory-consistent network medicine algorithm yields a **similar set of high-priority candidates** when starting from the same seed genes in the best interactome (STRING).
+
+
+**PROCONSUL** follows the same network medicine intuition as DIAMOnD: *true disease genes tend to cluster in the interactome*, so genes that are unusually well-connected to the current disease module are plausible candidates.  
+The difference is that DIAMOnD is **deterministic** (always picks the single best candidate by smallest p-value), whereas PROCONSUL is **stochastic**:
+
+1. At each iteration, we consider the **boundary nodes** (neighbors of the current seed/module set not yet in the module).
+2. For each candidate we compute a **connectivity significance p-value** (hypergeometric tail) analogous to DIAMOnD: “how surprising is it to have ≥ k links to the module given the node’s degree?”
+3. We convert significance to an **information score** (Shannon information): `I = -log(p)` so that smaller p-values become larger “evidence”.
+4. We transform information scores into a **sampling distribution** using a softmax with temperature `T`:
+   - low `T` → more greedy / DIAMOnD-like behavior (mass concentrated on top candidates),
+   - high `T` → more exploratory behavior (flatter probabilities).
+5. We **sample one gene** according to these probabilities, add it to the module, and repeat until we have `m` predictions.
+6. We repeat this process for `n_runs` runs and aggregate results by **position-based scoring** (genes selected earlier receive higher scores), producing a stable final ranking.
+
+This probabilistic design is motivated by the fact that interactomes are noisy and incomplete: when many candidates have similar significance, allowing controlled exploration can reduce sensitivity to small topological artifacts and can reveal **multiple plausible module expansions**.
+
+- **Setup:** we create a dedicated output folder (`PART5_outputs`) and ensure `PROCONSUL.py` is present, enforcing reproducibility and early failure if the dependency is missing.
+- **Wrapper functions:**
+  - `run_proconsul()` writes the seed list to disk, constructs a command-line call to the Python implementation (passing `m`, `n_runs`, `temp`, and a fixed RNG seed), and checks that an output file is actually produced.
+  - `read_proconsul_rank()` loads the TSV output and extracts the ranked gene list, with a strict format check to avoid silent parsing errors.
+- **Run step:** we define the comparison target as the **Top-20 genes** from our best performer and save them. The actual PROCONSUL execution chunk is set to `eval=FALSE` because it can be time-consuming; we rely on cached results already saved in `PART5_outputs/proconsul_*_temp1.tsv`.
+- **Load cached results:** if the expected PROCONSUL output is missing, we search for an existing file (same naming pattern) to keep the pipeline robust across machines/reruns; otherwise we stop with a clear error.
+- **Comparison:** we compute:
+  - `overlap` = intersection between the two Top-20 lists,
+  - `jaccard` = `|A ∩ B| / |A ∪ B|` as a normalized similarity measure,
+  and we save both the overlapping genes and a summary table to disk. Printing the set differences highlights which candidates are unique to each method.
+
+Overall, this section provides a **sanity-check validation**: if PROCONSUL recovers many of the same candidates as our best performer, it strengthens confidence that our predictions reflect robust disease-module topology rather than a method-specific artifact.
 
 ## Setup
 
@@ -1507,7 +1763,6 @@ run_proconsul(
 ```
 
 ```{r}
-# Carica i risultati già calcolati
 pro_out <- file.path(OUT5, paste0("proconsul_", best_network, "_temp1.tsv"))
 
 if (!file.exists(pro_out)) {
@@ -1551,22 +1806,89 @@ cmp_tbl <- tibble::tibble(
 
 readr::write_csv(cmp_tbl, file.path(OUT5, "TOP20_overlap_best_vs_proconsul_temp1.csv"))
 
-message("PROCONSUL done. Outputs written to: ", OUT5)
 
 print(cmp_tbl)
-print(setdiff(best_top20,overlap))
-print(setdiff(pro_top20,overlap))
+cat(
+  "DIAMOnD (best performer) Top-20 genes include:\n  ",
+  paste(best_top20, collapse = ", "),
+  "\n",
+  "Non-overlapping DIAMOnD genes (vs PROCONSUL):\n  ",
+  paste(setdiff(best_top20, overlap), collapse = ", "),
+  "\n",
+  sep = ""
+)
+
+cat(
+  "PROCONSUL (temp=1) Top-20 genes include:\n  ",
+  paste(pro_top20, collapse = ", "),
+  "\n",
+  "Non-overlapping PROCONSUL genes (vs DIAMOnD):\n  ",
+  paste(setdiff(pro_top20, overlap), collapse = ", "),
+  "\n",
+  sep = ""
+)
+
 
 ```
 
-# Summary
+# Project Summary
 
-This R Markdown document contains the complete BNM project analysis for Multiple Sclerosis, including:
+In this project we applied a full network medicine pipeline to Multiple Sclerosis, starting from known disease genes (seeds) and moving toward  
+(i) robust interactome selection,  
+(ii) validated gene prioritization,  
+(iii) functional interpretation,  
+(iv) drug repurposing signals, and  
+(v) external-method sanity checking.
 
--   Part 1: Interactome construction and disease gene mapping
--   Part 2: Cross-validation of gene prioritization methods
--   Part 3: Functional enrichment analysis of putative genes
--   Part 4: Drug-gene interaction and clinical trial analysis
--   Part 5: Comparison with PROCONSUL algorithm
 
-All outputs are saved in their respective directories for further analysis
+
+**Part 1 — Interactomes and seed mapping**  
+
+We constructed four human interactomes (BioGRID, HuRI, STRING, Reactome) and worked on each network’s largest connected component (LCC) to ensure that diffusion and module-expansion methods are well defined and comparable.  
+
+Gene identifiers were mapped to HGNC symbols using Ensembl mirrors, and we quantified how many Multiple Sclerosis seed genes were present in each interactome LCC. Seed coverage was high in BioGRID (247 seeds; 84.3%) and STRING (239; 81.6%), intermediate in Reactome (202; 68.9%), and substantially lower in HuRI (112; 38.2%). This motivated a preference for interactomes that combine strong connectivity with substantial disease-gene presence.
+
+
+
+**Part 2 — Gene prioritization with cross-validation**  
+
+We benchmarked two complementary families of methods across interactomes using 5-fold cross-validation:  
+(i) DIAMOnD (local module expansion), and  
+(ii) heat diffusion / network propagation (global smoothing) across multiple diffusion times.  
+
+To avoid information leakage, training seeds were removed from candidate rankings before evaluation. Performance was assessed at multiple TopK thresholds adapted to the number of available seeds.  
+
+Across networks and parameters, the best-performing configuration was DIAMOnD on STRING, justifying the selection of STRING + DIAMOnD as the final “best performer” for downstream analysis.
+
+
+
+**Part 3 — Functional enrichment of predicted genes**  
+
+Using the selected configuration, we generated the Top-100 putative genes (e.g., TNFRSF25, IRF5, IL18R1, SH2B3, BLK, CTLA4, CIITA, TBX21, CD28, IL21R).  
+
+Functional enrichment was then performed on both the seed genes and the putative genes using EnrichR libraries, complemented by clusterProfiler and ReactomePA dotplots. The putative gene set strongly recapitulated immune and inflammatory biology consistent with Multiple Sclerosis, highlighting pathways such as T-cell activation, leukocyte adhesion, cytokine and chemokine signaling, antigen processing and presentation, Th1/Th2/Th17 differentiation, interferon signaling, and PD-1 / CD28 co-stimulation.  
+
+Overlap analysis between seed and putative enrichments showed substantial agreement, particularly for pathway-level databases. KEGG displayed a Jaccard similarity of 0.625 (45 overlapping significant terms), while Reactome and GO Biological Process showed moderate but meaningful overlap (e.g., Reactome Jaccard = 0.295; GO-BP Jaccard = 0.249). This indicates that the prioritization recovers disease-relevant biology rather than generic network hubs.
+
+
+
+**Part 4 — Drug–gene interactions (DGIdb)** 
+
+We queried approved DGIdb interactions for the Top-20 predicted genes and ranked drugs by the number of these genes they target. The strongest signals were PEGinterferon alfa-2b and ribavirin, each covering three of the Top-20 genes (CTLA4, HLA-C, IL21R), with additional high-frequency interactions centered on immune checkpoint targets such as CTLA4.  
+
+This step was treated as a hypothesis-generation layer, emphasizing drugs that act on multiple top-ranked genes rather than isolated single-gene interactions.
+
+
+
+**Part 5 — PROCONSUL comparison (sanity check)** 
+
+As a final robustness check, we ran PROCONSUL on the same best interactome and seed set (m = 20, n_runs = 50, temp = 1.0) and compared its Top-20 list with the Top-20 genes from our best-performing configuration. The agreement was extremely high, with 19 out of 20 genes overlapping and a Jaccard similarity of 0.905. This demonstrates that our final candidate set is not an artifact of a single algorithmic choice.
+
+
+
+Overall, our methodological choices were driven by:  
+(i) enforcing graph connectivity via the LCC,  
+(ii) prioritizing interactomes with strong disease-seed coverage,  
+(iii) selecting methods based on cross-validated performance rather than intuition, and  
+(iv) validating biological plausibility through enrichment concordance and methodological robustness through PROCONSUL agreement.
+
